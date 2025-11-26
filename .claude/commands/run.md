@@ -50,7 +50,9 @@ python .claude/factory/notify.py "🎯 タスク開始 #${issue_id}" --title "Is
 2. Issueが存在し、openであることを確認
 3. **依存関係チェック**: Issue本文の `## 依存` セクションを確認
    - `Blocked by #N` の記載がある場合、Issue #N がクローズされているか確認
-   - 依存先Issueがオープンの場合、このIssueをスキップして終了（エラーではない）
+   - 依存先Issueがオープンの場合:
+     - **アサインを解除** (`gh issue edit {issue_id} --remove-assignee @me`)
+     - このIssueをスキップして終了（エラーではない）
    - スキップ時は `⏭️ スキップ: 依存先 #N が未完了` とログ出力
 4. `gh issue edit {issue_id} --add-assignee @me` で自分をアサイン
 
@@ -65,10 +67,15 @@ if [ -n "$BLOCKED_BY" ]; then
     DEP_STATE=$(gh issue view $BLOCKED_BY --json state --jq '.state')
     if [ "$DEP_STATE" != "CLOSED" ]; then
         echo "⏭️ スキップ: 依存先 #$BLOCKED_BY が未完了"
+        # 重要: アサインを解除して他のワーカーが処理できるようにする
+        gh issue edit {issue_id} --remove-assignee @me
         exit 0  # 正常終了（スキップ）
     fi
 fi
 ```
+
+**重要**: 依存関係によるスキップ時は**必ずアサインを解除**すること。
+解除しないと、そのIssueが `/auto` の検索対象から外れたまま放置される。
 
 ---
 

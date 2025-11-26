@@ -47,7 +47,8 @@ while true:
     3. 楽観的ロックでアサイン
     4. claude -p "/run {issue_id}" を実行（別プロセス）
     5. 終了コードを確認
-    6. 次のIssueへ
+    6. /run成功時は claude -p "/merge" を実行（別プロセス）
+    7. 次のIssueへ
 ```
 
 **ポイント**: 各Issueの処理は`claude -p`で別プロセスとして実行。
@@ -127,6 +128,31 @@ claude -p "/run {issue_id}"
 **失敗時:**
 - Issueに失敗コメント投稿（失敗フェーズ、エラー内容、推奨アクション）
 - `failed` ラベル付与、`todo` ラベル削除
+
+---
+
+## ステップ5: /merge 実行（/run成功時のみ）
+
+`/run`が成功した場合（終了コード0）、**別プロセス**で`/merge`を実行:
+
+```bash
+# /run成功時のみ実行
+claude -p "/merge"
+```
+
+処理内容:
+- 対象PRを自動選択（最も古いtodo IssueのPR）
+- マージ前チェック（mergeable確認）
+- mainブランチへマージ
+- ドキュメント同期（`/sync`）
+- 統合検証（`@Validator`）
+- Issueクローズ、ラベル更新
+
+**`/run` 失敗時は `/merge` をスキップして次のIssueへ。**
+
+---
+
+## ステップ6: 次のIssueへ
 
 **`/run` 完了後（成功・失敗問わず）、ステップ1に戻って次のIssueを検索。**
 
