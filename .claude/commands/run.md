@@ -48,7 +48,27 @@ python .claude/factory/notify.py "🎯 タスク開始 #${issue_id}" --title "Is
 
 1. `gh issue view {issue_id}` でIssueの内容を取得
 2. Issueが存在し、openであることを確認
-3. `gh issue edit {issue_id} --add-assignee @me` で自分をアサイン
+3. **依存関係チェック**: Issue本文の `## 依存` セクションを確認
+   - `Blocked by #N` の記載がある場合、Issue #N がクローズされているか確認
+   - 依存先Issueがオープンの場合、このIssueをスキップして終了（エラーではない）
+   - スキップ時は `⏭️ スキップ: 依存先 #N が未完了` とログ出力
+4. `gh issue edit {issue_id} --add-assignee @me` で自分をアサイン
+
+### 依存関係チェックの実装
+
+```bash
+# Issue本文から依存関係を抽出
+BLOCKED_BY=$(gh issue view {issue_id} --json body --jq '.body' | grep -oP 'Blocked by #\K\d+' | head -1)
+
+if [ -n "$BLOCKED_BY" ]; then
+    # 依存先Issueの状態を確認
+    DEP_STATE=$(gh issue view $BLOCKED_BY --json state --jq '.state')
+    if [ "$DEP_STATE" != "CLOSED" ]; then
+        echo "⏭️ スキップ: 依存先 #$BLOCKED_BY が未完了"
+        exit 0  # 正常終了（スキップ）
+    fi
+fi
+```
 
 ---
 
@@ -102,33 +122,22 @@ git worktree add .claude/worktrees/task-{issue_id} -b feature/issue-{issue_id}
 
 ---
 
-## フェーズ5: ドキュメント同期
+## フェーズ5: PR作成
 
-`/sync` コマンドを実行してドキュメントを更新する。
-
-- アーキテクチャドキュメントを更新
-- 必要に応じてREADMEを更新
-
-**完了したら、停止せずにフェーズ6へ進む。**
-
----
-
-## フェーズ6: PR作成
-
-### 6-1. 変更をコミット
+### 5-1. 変更をコミット
 
 ```bash
 git add -A
 git commit -m "feat: Resolve #{issue_id} - [Issueタイトル]"
 ```
 
-### 6-2. プッシュ
+### 5-2. プッシュ
 
 ```bash
 git push origin HEAD --force-with-lease
 ```
 
-### 6-3. PR作成
+### 5-3. PR作成
 
 ```bash
 gh pr create --title "feat: Resolve #{issue_id}" --body "$(cat <<'EOF'
@@ -158,7 +167,7 @@ EOF
 )"
 ```
 
-### 6-4. Issueに完了コメントを投稿
+### 5-4. Issueに完了コメントを投稿
 
 ```bash
 gh issue comment {issue_id} --body "$(cat <<'EOF'
@@ -190,11 +199,11 @@ EOF
 python .claude/factory/notify.py "🚀 PR作成完了 #${issue_id}" --title "Issue #${issue_id}" --level success || true
 ```
 
-**PR作成完了したら、停止せずにフェーズ7へ進む。**
+**PR作成完了したら、停止せずにフェーズ6へ進む。**
 
 ---
 
-## フェーズ7: Kaizen
+## フェーズ6: Kaizen
 
 `/kaizen {issue_id}` コマンドを実行して学びを記録する。
 
@@ -203,7 +212,7 @@ python .claude/factory/notify.py "🚀 PR作成完了 #${issue_id}" --title "Iss
 
 ---
 
-## フェーズ8: クリーンアップ
+## フェーズ7: クリーンアップ
 
 worktreeを削除:
 ```bash

@@ -1,6 +1,6 @@
-# AI Factory v2.6 エージェントガイド
+# AI Factory v2.7 エージェントガイド
 
-このガイドでは、AI Factory v2.6 の8つの専門AIエージェントについて詳しく説明します。
+このガイドでは、AI Factory v2.7 の9つの専門AIエージェントについて詳しく説明します。
 
 ## 目次
 
@@ -13,14 +13,15 @@
   - [5. Coder](#5-coder)
   - [6. Librarian](#6-librarian)
   - [7. Tech Lead](#7-tech-lead)
-  - [8. Scrum Master](#8-scrum-master)
+  - [8. Validator](#8-validator)
+  - [9. Scrum Master](#9-scrum-master)
 - [エージェントのカスタマイズ](#エージェントのカスタマイズ)
 
 ---
 
 ## エージェント概要
 
-AI Factory は8つの専門AIエージェントが協調して動作します。各エージェントは明確な役割と責任を持ち、ワークフローの特定フェーズで活躍します。
+AI Factory は9つの専門AIエージェントが協調して動作します。各エージェントは明確な役割と責任を持ち、ワークフローの特定フェーズで活躍します。
 
 ### エージェント一覧
 
@@ -32,7 +33,8 @@ AI Factory は8つの専門AIエージェントが協調して動作します。
 | **QA Engineer** | テスト設計・実装 | 実装 | `/test` | [qa.md](../.claude/agents/qa.md) |
 | **Coder** | 機能実装 | 実装 | `/impl` | [coder.md](../.claude/agents/coder.md) |
 | **Tech Lead** | コード監査・変異テスト | 実装 | `/review` | [tech_lead.md](../.claude/agents/tech_lead.md) |
-| **Librarian** | ドキュメント同期 | 実装 | `/sync` | [librarian.md](../.claude/agents/librarian.md) |
+| **Librarian** | ドキュメント同期 | マージ | `/sync`, `/merge` | [librarian.md](../.claude/agents/librarian.md) |
+| **Validator** | マージ後統合検証 | マージ | `/merge` | [validator.md](../.claude/agents/validator.md) |
 | **Scrum Master** | 知識蒸留・継続改善 | 実装 | `/kaizen` | [scrum_master.md](../.claude/agents/scrum_master.md) |
 
 ### エージェント相互作用図
@@ -55,10 +57,19 @@ graph TD
         H -->|テスト成功| I[@Tech_Lead]
         I -->|静的解析・変異テスト| J{Approved?}
         J -->|Reject| G
-        J -->|Approved| K[@Librarian]
-        K -->|ドキュメント更新| L[PR作成]
+        J -->|Approved| L[PR作成]
         L --> M[@Scrum_Master]
         M -->|知識蒸留| N[claude.md更新]
+    end
+
+    subgraph マージフェーズ
+        L -->|/merge| O[mainマージ]
+        O --> K[@Librarian]
+        K -->|ドキュメント更新| P[@Validator]
+        P -->|統合検証| Q{PASSED?}
+        Q -->|FAILED| R[バグIssue作成]
+        R --> E
+        Q -->|PASSED| S[完了]
     end
 
     style B fill:#fff9c4
@@ -68,6 +79,7 @@ graph TD
     style G fill:#d1c4e9
     style I fill:#c8e6c9
     style K fill:#b2dfdb
+    style P fill:#bbdefb
     style M fill:#ffecd2
 ```
 
@@ -1114,7 +1126,74 @@ claude -p /review -- 42
 
 ---
 
-### 8. Scrum Master
+### 8. Validator
+
+**定義ファイル**: [.claude/agents/validator.md](../.claude/agents/validator.md)
+
+#### 役割と責任
+
+Validator（@Validator）は、PRがmainブランチにマージされた後、システム全体が正しく動作することを検証する統合検証エンジニアです。
+
+**主な責任**:
+- テスト実行（pytest）
+- 静的解析（ruff, mypy）
+- 統合テスト（アプリケーション起動確認）
+- 回帰テスト（既存機能が壊れていないか）
+
+#### 判定基準
+
+- **pytest**: 全テストが通過すること
+- **ruff**: エラーがないこと
+- **mypy**: 型エラーがないこと
+- **統合テスト**: モジュールのインポートが成功すること
+
+#### 出力形式
+
+##### PASSED（検証成功）
+
+```
+✅ [PASSED] マージ後検証完了
+- pytest: OK (N tests passed)
+- ruff: OK
+- mypy: OK
+- 統合テスト: OK
+```
+
+##### FAILED（検証失敗）
+
+```
+❌ [FAILED] マージ後検証失敗
+
+### 失敗項目
+- [失敗したチェック名]
+
+### エラー詳細
+[エラーメッセージ]
+
+### 推奨アクション
+- [修正のヒント]
+```
+
+#### 使用されるコマンド
+
+`/merge` コマンドのフェーズ6で呼び出されます:
+
+```bash
+claude -p /merge -- 123
+```
+
+#### 検証失敗時の対応
+
+検証が失敗した場合、自動的にバグIssueを作成します：
+- ラベル: `bug`, `todo`
+- 元のPR/Issueへの参照を含む
+- エラーの詳細と再現手順を記載
+
+このIssueは通常の `/run` フローで修正されます。
+
+---
+
+### 9. Scrum Master
 
 **定義ファイル**: [.claude/agents/scrum_master.md](../.claude/agents/scrum_master.md)
 
@@ -1158,4 +1237,4 @@ claude -p /kaizen -- 42
 
 ---
 
-**AI Factory v2.6 エージェントガイド** - 8つの専門AIエージェントの完全ガイド
+**AI Factory v2.7 エージェントガイド** - 9つの専門AIエージェントの完全ガイド
