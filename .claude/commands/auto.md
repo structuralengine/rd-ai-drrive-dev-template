@@ -4,16 +4,11 @@ description: Auto-process all todo issues
 
 **TODO Issueの自動連続処理**
 
-`label:todo` かつ `no:assignee` のIssueを若い番号順に取得し、すべて処理するまで `/run` を繰り返し実行します。
+`label:todo` かつ `no:assignee` のIssueを若い番号順に取得し、すべて処理するまで繰り返し実行します。
 
 ## 重要: 完全自動実行モード（確認なし）
 
 このコマンドは **完全自動で実行** します。**途中でユーザーに確認を求めない。**
-
-- ユーザーへの確認なしで全Issueを連続処理
-- 各Issueごとに `/run {issue_id}` を呼び出し
-- 全Issue処理完了まで停止しない
-- 処理完了後に最終報告を行う
 
 **禁止事項**:
 - 「続行してよいですか？」と聞かない
@@ -22,37 +17,30 @@ description: Auto-process all todo issues
 
 ---
 
-## Slack通知
-
-各イベント時にSlack通知を送信する。
-環境変数 `AI_FACTORY_WEBHOOK` が設定されている場合のみ動作。
-
-```bash
-# 通知ヘルパー（エラーでも処理を止めない）
-python .claude/factory/notify.py "メッセージ" --level info || true
-```
-
-**通知タイミング**:
-- 🏭 自動処理開始時
-- 📊 全Issue処理完了時（サマリー）
-
----
-
 ## 処理フロー
 
 ```
-while true:
+while (対象Issueあり):
     1. gh issue list で対象Issue検索
     2. 見つからなければ終了
     3. 楽観的ロックでアサイン
-    4. claude -p "/run {issue_id}" を実行（別プロセス）
-    5. 終了コードを確認
-    6. /run成功時は claude -p "/merge" を実行（別プロセス）
-    7. 次のIssueへ
+    4. /run {issue_id} を実行
+    5. /compact でコンテキストを圧縮
+    6. /merge を実行（/run成功時）
+    7. /compact でコンテキストを圧縮
+    8. 次のIssueへ
 ```
 
-**ポイント**: 各Issueの処理は`claude -p`で別プロセスとして実行。
-これによりIssueごとにコンテキストがリセットされ、長時間実行でもメモリ問題を回避。
+**重要**: 各Issue処理後に `/compact` を実行してコンテキストを圧縮する。
+これにより長時間実行でもコンテキストオーバーフローを防ぐ。
+
+---
+
+## ステップ0: 開始通知
+
+```bash
+python .claude/factory/notify.py "🏭 自動処理開始" --title "AI Factory" --level info || true
+```
 
 ---
 
@@ -91,70 +79,71 @@ gh issue edit {id} --add-assignee @me
 sleep 2
 gh issue view {id} --json assignees --jq ".assignees | length"
 # → "1" でなければ競合発生、アサイン取り消してスキップ
-
-# 4. 競合時のロールバック
-gh issue edit {id} --remove-assignee @me
 ```
 
 ---
 
-## ステップ4: /run 実行（別プロセス）
+## ステップ4: /run 実行（同一セッション内）
 
-アサイン成功後、**別プロセス**で`/run`を実行してコンテキストをリセット:
+アサイン成功後、`/run {issue_id}` を直接実行:
 
-```bash
-# 別プロセスで実行（コンテキスト分離）
-claude -p "/run {issue_id}"
+```
+/run {issue_id}
 ```
 
-**重要**: 同一セッション内で`/run`を呼び出すとコンテキストが蓄積してオーバーフローするため、
-必ず`claude -p`で別プロセスとして起動する。
-
-処理内容:
-- Git worktree作成
-- `/test` → `/impl` → `/review` → `/sync` → PR作成
-- `/kaizen`
-- クリーンアップ
-
-### /run の主要な出力
-
-`/run` は以下を自動で行う（詳細は `/run.md` 参照）:
-
-**成功時:**
-- PR作成（テスト結果・変更内容を含むbody）
-- Issueに完了コメント投稿
-- `todo` ラベルはそのまま（PRマージ時に削除）
-
-**失敗時:**
-- Issueに失敗コメント投稿（失敗フェーズ、エラー内容、推奨アクション）
-- `failed` ラベル付与、`todo` ラベル削除
+**重要**: `/run` はエージェントを Task tool 経由で呼び出すため、
+サブエージェントのコンテキストは独立している。
+ただし、親コンテキストにはログが蓄積されるため、
+処理完了後に `/compact` で圧縮する。
 
 ---
 
-## ステップ5: /merge 実行（/run成功時のみ）
+## ステップ5: コンテキスト圧縮
 
-`/run`が成功した場合（終了コード0）、**別プロセス**で`/merge`を実行:
+`/run` 完了後（成功・失敗問わず）、コンテキストを圧縮:
 
-```bash
-# /run成功時のみ実行
-claude -p "/merge"
+```
+/compact
+```
+
+これにより:
+- 処理ログが要約される
+- コンテキストウィンドウの消費を抑える
+- 長時間実行でも安定動作
+
+---
+
+## ステップ6: /merge 実行（/run成功時のみ）
+
+`/run` が成功した場合、`/merge` を実行:
+
+```
+/merge
 ```
 
 処理内容:
 - 対象PRを自動選択（最も古いtodo IssueのPR）
-- マージ前チェック（mergeable確認）
 - mainブランチへマージ
-- ドキュメント同期（`/sync`）
-- 統合検証（`@Validator`）
+- 統合検証（@Validator）
 - Issueクローズ、ラベル更新
 
-**`/run` 失敗時は `/merge` をスキップして次のIssueへ。**
+**`/run` 失敗時は `/merge` をスキップ。**
 
 ---
 
-## ステップ6: 次のIssueへ
+## ステップ7: コンテキスト圧縮（再度）
 
-**`/run` 完了後（成功・失敗問わず）、ステップ1に戻って次のIssueを検索。**
+`/merge` 完了後も `/compact` を実行:
+
+```
+/compact
+```
+
+---
+
+## ステップ8: 次のIssueへ
+
+**ステップ1に戻って次のIssueを検索。**
 
 ---
 
@@ -166,33 +155,6 @@ claude -p "/merge"
 | `/run` 失敗 | 次のIssueへ | 失敗コメント + `failed`ラベル |
 | GitHub CLI認証エラー | 処理を中断して最終報告へ | なし |
 
-### 失敗時のIssueコメント例
-
-```markdown
-## ❌ 実装失敗
-
-### 失敗フェーズ
-フェーズ3: 実装
-
-### エラー内容
-```
-pytest failed: 2 tests failed
-- test_feature_a: AssertionError
-- test_feature_b: TypeError
-```
-
-### 試行した対応
-- 型エラーの修正を試行（3回リトライ）
-- テストケースの見直し
-
-### 推奨アクション
-- Issueの要件を再確認
-- 手動でテストを実行して原因調査
-
----
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-```
-
 ---
 
 ## 並列実行
@@ -201,20 +163,10 @@ pytest failed: 2 tests failed
 
 ```bash
 # ターミナル1
-claude -p "/auto"
+/auto
 
-# ターミナル2
-claude -p "/auto"
-```
-
----
-
-## ステップ0: 開始通知
-
-処理開始時にSlack通知を送信:
-
-```bash
-python .claude/factory/notify.py "🏭 自動処理開始" --title "AI Factory" --level info || true
+# ターミナル2（別セッション）
+/auto
 ```
 
 ---

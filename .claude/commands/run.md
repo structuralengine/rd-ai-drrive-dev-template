@@ -14,10 +14,6 @@ arguments:
 
 このコマンドは **一気通貫で自動実行** します。**途中でユーザーに確認を求めない。**
 
-- ユーザーへの確認なしで全フェーズを連続実行
-- 途中で停止しない（エラー時を除く）
-- 全フェーズ完了後に最終報告を行う
-
 **禁止事項**:
 - 「この実装でよいですか？」と聞かない
 - 「PRを作成してよいですか？」と聞かない
@@ -29,10 +25,8 @@ arguments:
 ## Slack通知
 
 各フェーズの開始・完了時にSlack通知を送信する。
-環境変数 `AI_FACTORY_WEBHOOK` が設定されている場合のみ動作。
 
 ```bash
-# 通知ヘルパー（エラーでも処理を止めない）
 python .claude/factory/notify.py "メッセージ" --level info || true
 ```
 
@@ -42,40 +36,11 @@ python .claude/factory/notify.py "メッセージ" --level info || true
 
 **Slack通知**: 🎯 タスク開始 #{issue_id}
 
-```bash
-python .claude/factory/notify.py "🎯 タスク開始 #${issue_id}" --title "Issue #${issue_id}" --level info || true
-```
-
 1. `gh issue view {issue_id}` でIssueの内容を取得
 2. Issueが存在し、openであることを確認
-3. **依存関係チェック**: Issue本文の `## 依存` セクションを確認
-   - `Blocked by #N` の記載がある場合、Issue #N がクローズされているか確認
-   - 依存先Issueがオープンの場合:
-     - **アサインを解除** (`gh issue edit {issue_id} --remove-assignee @me`)
-     - このIssueをスキップして終了（エラーではない）
-   - スキップ時は `⏭️ スキップ: 依存先 #N が未完了` とログ出力
+3. **依存関係チェック**: `Blocked by #N` がある場合、#N がクローズ済みか確認
+   - 未完了なら: アサイン解除してスキップ
 4. `gh issue edit {issue_id} --add-assignee @me` で自分をアサイン
-
-### 依存関係チェックの実装
-
-```bash
-# Issue本文から依存関係を抽出
-BLOCKED_BY=$(gh issue view {issue_id} --json body --jq '.body' | grep -oP 'Blocked by #\K\d+' | head -1)
-
-if [ -n "$BLOCKED_BY" ]; then
-    # 依存先Issueの状態を確認
-    DEP_STATE=$(gh issue view $BLOCKED_BY --json state --jq '.state')
-    if [ "$DEP_STATE" != "CLOSED" ]; then
-        echo "⏭️ スキップ: 依存先 #$BLOCKED_BY が未完了"
-        # 重要: アサインを解除して他のワーカーが処理できるようにする
-        gh issue edit {issue_id} --remove-assignee @me
-        exit 0  # 正常終了（スキップ）
-    fi
-fi
-```
-
-**重要**: 依存関係によるスキップ時は**必ずアサインを解除**すること。
-解除しないと、そのIssueが `/auto` の検索対象から外れたまま放置される。
 
 ---
 
@@ -89,43 +54,52 @@ git worktree add .claude/worktrees/task-{issue_id} -b feature/issue-{issue_id}
 
 以降の作業はこのworktree内で実行。
 
-**完了したら、停止せずにフェーズ2へ進む。**
-
 ---
 
 ## フェーズ2: テスト生成（TDD）
 
-`/test {issue_id}` コマンドを実行してテストコードを生成する。
+**@QA_Engineer** にテストコード作成を依頼する（Task tool経由でサブエージェントとして呼び出し）。
 
-- Issueの内容を読み取り、テストケースを設計
+**依頼内容**:
+- Issue #{issue_id} の内容を渡す
 - `tests/` ディレクトリにテストファイルを作成
-- `uv run pytest` で構文エラーがないことを確認（テスト失敗OK）
+- 正常系・異常系・境界値テストを含める
 
-**完了したら、停止せずにフェーズ3へ進む。**
+**確認**:
+```bash
+uv run pytest --collect-only  # 構文エラーがないことを確認
+```
 
 ---
 
 ## フェーズ3: 実装
 
-`/impl {issue_id}` コマンドを実行して実装を作成する。
+**@Coder** に実装を依頼する（Task tool経由でサブエージェントとして呼び出し）。
 
+**依頼内容**:
+- Issue #{issue_id} の内容を渡す
+- 作成されたテストファイルのパスを渡す
 - テストを通過する実装を作成
-- `uv run pytest -v` でテストを実行
-- テスト失敗の場合は修正（最大3回リトライ）
 
-**テスト通過したら、停止せずにフェーズ4へ進む。**
+**テスト実行**:
+```bash
+uv run pytest -v
+```
+
+**テスト失敗の場合**: @Coder に修正を依頼（最大3回リトライ）
 
 ---
 
 ## フェーズ4: コードレビュー
 
-`/review {issue_id}` コマンドを実行してコードレビューを行う。
+**@Tech_Lead** にコードレビューを依頼する（Task tool経由でサブエージェントとして呼び出し）。
 
-- 静的解析を実行（ruff, mypy）
-- 変異テストを実行（mutmut）
-- 問題があればIssueにコメントして修正
+**依頼内容**:
+- 実装されたコードのレビュー
+- 静的解析（ruff, mypy）の実行
+- 変異テスト（mutmut）の実行（可能であれば）
 
-**レビュー通過したら、停止せずにフェーズ5へ進む。**
+**問題がある場合**: @Coder に修正を依頼
 
 ---
 
@@ -147,75 +121,30 @@ git push origin HEAD --force-with-lease
 ### 5-3. PR作成
 
 ```bash
-gh pr create --title "feat: Resolve #{issue_id}" --body "$(cat <<'EOF'
-## Summary
-
-[実装内容の1-3行サマリー]
-
-## Changes
-
-- [変更点1]
-- [変更点2]
-- [変更点3]
-
-## Test Results
-
-- ✅ pytest: [passed/failed] ([N] tests)
-- ✅ ruff: [passed/failed]
-- ✅ mypy: [passed/failed]
-
-## Related Issue
-
-Closes #{issue_id}
-
----
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
+gh pr create --title "feat: Resolve #{issue_id}" --body "..."
 ```
 
 ### 5-4. Issueに完了コメントを投稿
 
 ```bash
-gh issue comment {issue_id} --body "$(cat <<'EOF'
-## ✅ 実装完了
-
-PR #{pr_number} を作成しました。
-
-### 実装内容
-- [実装内容のサマリー]
-
-### テスト結果
-- pytest: ✅ passed ([N] tests)
-- ruff: ✅ passed
-- mypy: ✅ passed
-
-### 変更ファイル
-- `path/to/file1.py`
-- `path/to/file2.py`
-
----
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
+gh issue comment {issue_id} --body "## ✅ 実装完了\nPR #{pr_number} を作成しました。"
 ```
 
 **Slack通知**: 🚀 PR作成完了 #{issue_id}
-
-```bash
-python .claude/factory/notify.py "🚀 PR作成完了 #${issue_id}" --title "Issue #${issue_id}" --level success || true
-```
-
-**PR作成完了したら、停止せずにフェーズ6へ進む。**
 
 ---
 
 ## フェーズ6: Kaizen
 
-`/kaizen {issue_id}` コマンドを実行して学びを記録する。
+**@Scrum_Master** に学びの記録を依頼する（Task tool経由でサブエージェントとして呼び出し）。
 
-- 作業中の学びを `.claude/factory/memos/issue-{issue_id}-*.md` に記録
-- 汎用的な学びを `claude.md` に追記
+**依頼内容**:
+- 作業中の学びを収集
+- 汎用的な学びを適切なルールファイルに追記
+  - Python関連 → `.claude/rules/python.md`
+  - テスト関連 → `.claude/rules/testing.md`
+  - ライブラリ関連 → `.claude/rules/libraries.md`
+  - 設計関連 → `.claude/rules/architecture.md`
 
 ---
 
@@ -233,58 +162,15 @@ git worktree prune
 
 各フェーズで失敗した場合:
 
-### 1. Issueに失敗コメントを投稿
-
-```bash
-gh issue comment {issue_id} --body "$(cat <<'EOF'
-## ❌ 実装失敗
-
-### 失敗フェーズ
-[フェーズ名] (例: フェーズ3: 実装)
-
-### エラー内容
-```
-[エラーメッセージ]
-```
-
-### 試行した対応
-- [対応1]
-- [対応2]
-
-### 推奨アクション
-- [手動で確認が必要な点]
-- [修正のヒント]
-
----
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
-EOF
-)"
-```
+1. **Issueに失敗コメントを投稿**
+2. **ラベル変更**: `todo` → `failed`
+3. **worktreeクリーンアップ**
 
 **Slack通知**: ❌ 実装失敗 #{issue_id}
-
-```bash
-python .claude/factory/notify.py "❌ 実装失敗 #${issue_id} - [失敗フェーズ名]" --title "Issue #${issue_id}" --level error || true
-```
-
-### 2. ラベル変更
-
-```bash
-gh issue edit {issue_id} --remove-assignee @me --remove-label todo --add-label failed
-```
-
-### 3. worktreeクリーンアップ
-
-```bash
-git worktree remove .claude/worktrees/task-{issue_id} --force
-git worktree prune
-```
 
 ---
 
 ## 最終報告（全フェーズ完了後）
-
-全フェーズ完了後、ユーザーに以下を報告:
 
 1. **処理したIssue**: #{issue_id}
 2. **作成したPR**: PR番号とURL

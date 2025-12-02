@@ -1,5 +1,5 @@
 ---
-description: Prepare project (spec → critique → breakdown)
+description: Prepare project (hearing → spec → critique → breakdown)
 ---
 
 **プロジェクト計画の一気通貫実行**
@@ -19,7 +19,7 @@ description: Prepare project (spec → critique → breakdown)
 └───────────────────────────────────────────────┘
          ↓ 承認後
 ┌─── 自動実行フェーズ（確認なし）───────────────┐
-│    /spec → /critique → /breakdown            │
+│    @Product_Manager → @Critic → @Issue_Planner │
 │    途中で停止・確認しない                     │
 └───────────────────────────────────────────────┘
          ↓
@@ -55,25 +55,15 @@ description: Prepare project (spec → critique → breakdown)
 ## 質問のルール
 
 - **曖昧な回答には具体例を求める**
-  - 悪い例：「エラーハンドリングはどうしますか？」
-  - 良い例：「ファイルが見つからない場合、ユーザーに何を表示しますか？」
-
 - **選択肢を提示して絞り込む**
-  - 悪い例：「出力形式は何がいいですか？」
-  - 良い例：「出力形式は JSON / CSV / 画面表示 のどれですか？」
-
 - **自分の理解を述べて確認を取る**
-  - 悪い例：「他に機能はありますか？」
-  - 良い例：「〇〇という理解で進めますが、△△は不要という認識で合っていますか？」
-
-- **開放型質問は避ける**
-  - 「他にありますか？」「何かありますか？」は使わない
+- **開放型質問は避ける**（「他にありますか？」は使わない）
 
 ## 要件サマリーと承認
 
 全項目が明確になったら：
 
-1. **要件サマリーを提示**（以下の形式で）
+1. **要件サマリーを提示**
 
 ```markdown
 ## 要件サマリー
@@ -90,7 +80,6 @@ description: Prepare project (spec → critique → breakdown)
 ### 主要機能
 1. [機能1]
 2. [機能2]
-...
 
 ### エラー処理
 - [異常系の扱い]
@@ -116,12 +105,11 @@ description: Prepare project (spec → critique → breakdown)
 
 ## フェーズ1: 仕様書作成
 
-`/spec` コマンドを実行して仕様書を作成する。
+**@Product_Manager** に仕様書作成を依頼する（Task tool経由でサブエージェントとして呼び出し）。
 
-- ヒアリングで得た要件サマリーをコンテキストとして渡す
-- 対話なしで仕様書を作成・保存する
-
-**出力**: `docs/specs/spec-{YYYYMMDD-HHMMSS}.md`
+**依頼内容**:
+- ヒアリングで得た要件サマリーを渡す
+- `docs/specs/spec-{YYYYMMDD-HHMMSS}.md` に仕様書を作成
 
 **完了したら、停止せずにフェーズ2へ進む。**
 
@@ -129,11 +117,15 @@ description: Prepare project (spec → critique → breakdown)
 
 ## フェーズ2: レビュー
 
-`/critique` コマンドを実行して仕様書をレビューする。
+**@Critic** に仕様書のレビューを依頼する（Task tool経由でサブエージェントとして呼び出し）。
+
+**依頼内容**:
+- 作成した仕様書のパスを渡す
+- レビュー結果を受け取る
 
 **判定と対応**:
 - `APPROVED`: フェーズ3へ進む
-- `REQUEST_CHANGES`: 仕様書を修正してから再度 `/critique` を実行（最大3ラウンド）
+- `REQUEST_CHANGES`: @Product_Manager に修正を依頼し、再度 @Critic にレビュー依頼（最大3ラウンド）
 
 **レビュー通過したら、停止せずにフェーズ3へ進む。**
 
@@ -141,7 +133,11 @@ description: Prepare project (spec → critique → breakdown)
 
 ## フェーズ3: Issue分解
 
-`/breakdown` コマンドを実行して仕様書をGitHub Issueに分解する。
+**@Issue_Planner** に仕様書のIssue分解を依頼する（Task tool経由でサブエージェントとして呼び出し）。
+
+**依頼内容**:
+- レビュー通過した仕様書のパスを渡す
+- GitHub Issueを `label:todo` で作成
 
 **出力**: GitHub Issues（`label:todo`）
 
@@ -162,6 +158,6 @@ description: Prepare project (spec → critique → breakdown)
 
 - ヒアリングで要件サマリーの承認を得ている
 - 仕様書が `docs/specs/` に保存されている
-- レビューでAPPROVED判定を受けている
+- @Critic からAPPROVED判定を受けている
 - GitHub Issueが `todo` ラベル付きで作成されている
 - ユーザーに最終報告済み
